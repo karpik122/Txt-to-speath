@@ -1,1 +1,219 @@
-# Txt-to-speath
+<!DOCTYPE html><html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Inteligentny Lektor PL/EN – Wersja Mobilna + Słówka + Głosy</title>
+    <style>
+        body { font-family: sans-serif; max-width: 900px; margin: 20px auto; padding: 10px; background: #f0f2f5; text-align: center; }
+        textarea { width: 100%; height: 250px; padding: 12px; font-size: 16px; border-radius: 8px; border: 1px solid #ccc; font-family: monospace; resize: vertical; }
+        button { background: #28a745; color: white; border: none; padding: 12px 25px; font-size: 18px; cursor: pointer; margin: 10px; border-radius: 6px; width: 45%; max-width: 200px; }
+        button.stop { background: #dc3545; }
+        .highlight { font-weight: bold; color: #0056b3; background: #e7f1ff; padding: 15px; border-radius: 8px; margin-top: 20px; min-height: 60px; border: 1px solid #b8daff; }
+        .lang-tag { font-size: 0.9em; text-transform: uppercase; color: #888; display: block; margin-bottom: 5px; }
+        .speed-box, .voice-box { margin-top: 20px; font-size: 16px; }
+        #wordBox, #dictionaryBox { margin-top: 20px; padding: 15px; background: white; border-radius: 8px; border: 1px solid #ccc; text-align: left; font-size: 18px; display: none; }
+        .highlight-line { background: #ffef9f; padding: 5px; border-radius: 4px; }
+        .wordItem { cursor: pointer; padding: 3px 0; }
+    </style>
+</head>
+<body><h2>Lektor PL/EN – Mobilny + Biblioteka słówek + Wybór Głosu</h2>
+
+<textarea id="textInput" placeholder="Wklej tekst do czytania..."></textarea>
+
+<button onclick="startReading()">▶ Czytaj</button>
+<button class="stop" onclick="stopReading()">⬛ Stop</button>
+
+<div class="speed-box">
+    Prędkość czytania: <span id="speedLabel">1.0x</span><br>
+    <input type="range" id="speedSlider" min="0.5" max="2" step="0.1" value="1" oninput="updateSpeed()">
+</div>
+
+<div class="voice-box">
+    Wybór głosu:<br>
+    <select id="voiceSelect" style="padding:10px; width:90%; max-width:300px;"></select>
+</div>
+
+<div id="displayBox" class="highlight">
+    <span class="lang-tag">STATUS</span>
+    <span id="currentText">Gotowy do pracy.</span>
+</div>
+
+<h3>🔤 Biblioteka słówek</h3>
+<div id="dictionaryBox"></div>
+
+<div id="wordBox"></div>
+
+<script>
+let isReading = false;
+let readingSpeed = 1;
+let voices = [];
+let userDictionary = new Set();
+
+function loadVoices() {
+    voices = window.speechSynthesis.getVoices();
+    const select = document.getElementById("voiceSelect");
+
+    select.innerHTML = "";
+    voices.forEach((v, i) => {
+        let option = document.createElement("option");
+        option.value = i;
+        option.textContent = `${v.name} (${v.lang})`;
+        select.appendChild(option);
+    });
+}
+
+window.speechSynthesis.onvoiceschanged = loadVoices;
+
+function updateSpeed() {
+    const slider = document.getElementById("speedSlider").value;
+    readingSpeed = parseFloat(slider);
+    document.getElementById("speedLabel").textContent = slider + "x";
+}
+
+function startReading() {
+    const text = document.getElementById("textInput").value.trim();
+    if (!text) return;
+
+    window.speechSynthesis.cancel();
+    isReading = true;
+
+    const parts = splitTextSmart(text);
+    readPartsSequentially(parts);
+}
+
+function splitTextSmart(text) {
+    return text
+        .replace(/
++/g, "
+
+")
+        .split(/(?<=[.!?()])|(?=\()/g)
+        .map(t => t.trim())
+        .filter(t => t.length > 0);
+}
+
+function readPartsSequentially(parts) {
+    if (!isReading || parts.length === 0) return;
+
+    const fragment = parts.shift();
+    const utterance = new SpeechSynthesisUtterance(fragment);
+
+    utterance.voice = voices[document.getElementById("voiceSelect").value] || null;
+    utterance.rate = readingSpeed;
+    utterance.lang = detectLanguage(fragment);
+
+    utterance.onstart = () => {
+        highlightLine(fragment);
+        showWordLearning(fragment);
+    };
+
+    utterance.onend = () => readPartsSequentially(parts);
+
+    window.speechSynthesis.speak(utterance);
+}
+
+function detectLanguage(text) {
+    if (/[ąćęłńóśźż]/i.test(text)) return "pl-PL";
+    const pl = ["jest", "się", "ale", "nie", "tak", "kiedy", "dlaczego", "to", "czy", "dla", "od"];    
+    const lower = text.toLowerCase();
+    if (pl.some(w => lower.includes(w))) return "pl-PL";
+    return "en-US";
+}
+
+function stopReading() {
+    isReading = false;
+    window.speechSynthesis.cancel();
+    document.getElementById("currentText").textContent = "Zatrzymano.";
+    document.getElementById("currentText").classList.remove("highlight-line");
+}
+
+function highlightLine(text) {
+    const box = document.getElementById("currentText");
+    box.textContent = text;
+    box.classList.add("highlight-line");
+}
+
+function showWordLearning(text) {
+    const box = document.getElementById("wordBox");
+    const words = text.split(/[^a-zA-ZąęćłńóśźżĄĘĆŁŃÓŚŹŻ]+/).filter(w => w.length > 2);
+
+    if (words.length === 0) {
+        box.style.display = "none";
+        return;
+    }
+
+    let result = "Kliknij słowo, aby dodać do biblioteki:<br><br>";
+
+    words.forEach(w => {
+        if (/^[a-zA-Z]+$/.test(w)) {
+            result += `<div class='wordItem' onclick='addToDictionary("${w}")'><b>${w}</b></div>`;
+        }
+    });
+
+    box.innerHTML = result;
+    box.style.display = "block";
+}
+
+function addToDictionary(word) {
+    userDictionary.add(word);
+    updateDictionaryBox();
+}
+
+function updateDictionaryBox() {
+    const box = document.getElementById("dictionaryBox");
+
+    if (userDictionary.size === 0) {
+        box.style.display = "none";
+        return;
+    }
+
+    let html = "📘 Twoja biblioteka słówek:<br><br>";
+
+    userDictionary.forEach(w => {
+        html += `<b>${w}</b><br>`;
+    });
+
+    box.innerHTML = html;
+    box.style.display = "block";
+}
+</script><script>
+// === DARK MODE ===
+function toggleDarkMode() {
+    document.body.classList.toggle('dark');
+    localStorage.setItem('darkMode', document.body.classList.contains('dark'));
+}
+if (localStorage.getItem('darkMode') === 'true') document.body.classList.add('dark');
+
+// === AUTO WORD DETECTION ===
+function detectWordsFromText(text) {
+    const words = text.toLowerCase().match(/[a-zA-Ząęćłńóśżź]+/g) || [];
+    const unique = [...new Set(words)].filter(w => w.length > 2);
+    return unique;
+}
+
+// === EXPORT WORDS ===
+function exportWords() {
+    const data = JSON.stringify(savedWords);
+    const blob = new Blob([data], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'slownik.json';
+    a.click();
+}
+
+// === IMPORT WORDS ===
+function importWords(file) {
+    const reader = new FileReader();
+    reader.onload = () => {
+        try {
+            const imported = JSON.parse(reader.result);
+            savedWords = [...new Set([...savedWords, ...imported])];
+            localStorage.setItem('savedWords', JSON.stringify(savedWords));
+        } catch {}
+    };
+    reader.readAsText(file);
+}
+
+</script></body>
+</html>
